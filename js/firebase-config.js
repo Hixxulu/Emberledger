@@ -22,4 +22,4 @@ export const firebaseConfig = {
 // Optional soft passcode gate for the party. Leave "" for an open
 // link. This only deters casual visitors who stumble on the URL —
 // real access control lives in the Firestore rules (see README).
-export const APP_PASSCODE = "";
+export const APP_PASSCODE = "dorvus";
