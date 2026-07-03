@@ -1,0 +1,7 @@
+# Copyrighted books — never push these to a public repo
+Shadowdark-Core/
+Shadowdark-Zines/
+Vermis/
+
+# Local machine settings
+.claude/settings.local.json

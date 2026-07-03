@@ -1,0 +1,114 @@
+{
+  "sections": [
+    {
+      "title": "Checks",
+      "entries": [
+        { "name": "Making a check", "text": "Roll d20 + stat modifier. Meet or beat the DC to succeed." },
+        { "name": "Difficulty classes", "text": "Easy DC 9 · Normal DC 12 · Hard DC 15 · Extreme DC 18." },
+        { "name": "Advantage / disadvantage", "text": "Roll 2d20 and take the higher (advantage) or lower (disadvantage)." }
+      ]
+    },
+    {
+      "title": "Distance & Movement",
+      "entries": [
+        { "name": "Distances", "text": "Close = 5 ft · Near = up to 30 ft · Far = within sight." },
+        { "name": "Climbing", "text": "STR or DEX check, move at half speed. Fall if you fail by 5+." },
+        { "name": "Falling", "text": "1d6 damage per 10 ft fallen." },
+        { "name": "Swimming", "text": "Half speed (STR check in rough water). Hold breath CON mod rounds (min 1), then CON check each round or 1d6 damage." },
+        { "name": "Moving through", "text": "Free through allies; STR or DEX check to move through enemies." }
+      ]
+    },
+    {
+      "title": "Light & Darkness",
+      "entries": [
+        { "name": "Light timers", "text": "Most light sources burn for 1 hour of REAL time." },
+        { "name": "Torch", "text": "Lights a near radius. 3 torches make an immovable 8-hour campfire." },
+        { "name": "Lantern", "text": "Lights double near. Needs an oil flask (1 hour); has a shutter." },
+        { "name": "Total darkness", "text": "Disadvantage on sight-based tasks. The GM checks for an encounter every crawling round." }
+      ]
+    },
+    {
+      "title": "Dying",
+      "entries": [
+        { "name": "At 0 HP", "text": "You fall unconscious and are dying." },
+        { "name": "Death timer", "text": "You die in 1d4 + CON mod rounds (min 1). On your turn, roll a d20 — a natural 20 means you rise with 1 HP." },
+        { "name": "Stabilize", "text": "An ally at close range makes a DC 15 INT check; success stops the dying (still unconscious)." }
+      ]
+    },
+    {
+      "title": "Resting",
+      "entries": [
+        { "name": "To rest", "text": "Sleep 8 hours and consume a ration. Success restores all HP and stat damage." },
+        { "name": "Interruption", "text": "Each stressful interruption (incl. combat): DC 12 CON check or the rest fails (the ration is still spent)." }
+      ]
+    },
+    {
+      "title": "Advancement",
+      "entries": [
+        { "name": "Leveling up", "text": "You level up at (current level × 10) XP, then XP resets to 0. Level 1→2 at 10 XP, 2→3 at 20 XP … 9→10 at 90 XP." },
+        { "name": "On level up", "text": "Roll your class hit die and add it to max HP. Gain new title/spells, and a talent roll at levels 1, 3, 5, 7, 9." }
+      ]
+    },
+    {
+      "title": "Spellcasting",
+      "entries": [
+        { "name": "Spell check", "text": "d20 + casting stat modifier vs DC 10 + spell tier. Wizard = INT, priest = WIS, witch & Knight of St. Ydris = CHA." },
+        { "name": "Failure", "text": "The spell can't be cast again until you complete a rest." },
+        { "name": "Natural 1", "text": "The spell fails badly — roll the class's mishap/curse consequence." },
+        { "name": "Focus", "text": "Re-check at the start of each of your turns to keep a focus spell going. A failed focus check ends the spell but doesn't lose it." }
+      ]
+    },
+    {
+      "title": "Morale & Misc",
+      "entries": [
+        { "name": "Morale", "text": "Enemies at half numbers (or a solo at half HP) flee unless they pass a DC 15 WIS check." },
+        { "name": "Gear slots", "text": "Carry up to STR score or 10 slots, whichever is higher. Most items = 1 slot." },
+        { "name": "Coins", "text": "1 gp = 10 sp = 100 cp. 100 coins fill 1 gear slot (first 100 free)." },
+        { "name": "Crawling kit", "text": "7 gp, 7 slots: backpack, flint & steel, 2 torches, 3 rations, 10 iron spikes, grappling hook, 60' rope." }
+      ]
+    }
+  ],
+  "weapons": [
+    { "name": "Bastard sword", "cost": "10 gp", "type": "M", "range": "C", "damage": "1d8 / 1d10 (2H)", "properties": "V, 2 slots" },
+    { "name": "Club", "cost": "5 cp", "type": "M", "range": "C", "damage": "1d4", "properties": "-" },
+    { "name": "Crossbow", "cost": "8 gp", "type": "R", "range": "F", "damage": "1d6", "properties": "2H, L" },
+    { "name": "Dagger", "cost": "1 gp", "type": "M/R", "range": "C/N", "damage": "1d4", "properties": "F, Th" },
+    { "name": "Greataxe", "cost": "10 gp", "type": "M", "range": "C", "damage": "1d8 / 1d10 (2H)", "properties": "V, 2 slots" },
+    { "name": "Greatsword", "cost": "12 gp", "type": "M", "range": "C", "damage": "1d12", "properties": "2H, 2 slots" },
+    { "name": "Javelin", "cost": "5 sp", "type": "M/R", "range": "C/F", "damage": "1d4", "properties": "Th" },
+    { "name": "Longbow", "cost": "8 gp", "type": "R", "range": "F", "damage": "1d8", "properties": "2H" },
+    { "name": "Longsword", "cost": "9 gp", "type": "M", "range": "C", "damage": "1d8", "properties": "-" },
+    { "name": "Mace", "cost": "5 gp", "type": "M", "range": "C", "damage": "1d6", "properties": "-" },
+    { "name": "Shortbow", "cost": "6 gp", "type": "R", "range": "F", "damage": "1d4", "properties": "2H" },
+    { "name": "Shortsword", "cost": "7 gp", "type": "M", "range": "C", "damage": "1d6", "properties": "-" },
+    { "name": "Spear", "cost": "5 sp", "type": "M/R", "range": "C/N", "damage": "1d6", "properties": "Th" },
+    { "name": "Staff", "cost": "5 sp", "type": "M", "range": "C", "damage": "1d4", "properties": "2H" },
+    { "name": "Warhammer", "cost": "10 gp", "type": "M", "range": "C", "damage": "1d10", "properties": "2H" }
+  ],
+  "weaponKey": "M melee · R ranged · C close · N near · F far · V versatile · 2H two-handed · L loading · Th thrown · F(inesse) STR or DEX",
+  "armor": [
+    { "name": "Leather armor", "cost": "10 gp", "slots": "1", "ac": "11 + DEX mod", "properties": "-" },
+    { "name": "Chainmail", "cost": "60 gp", "slots": "2", "ac": "13 + DEX mod", "properties": "Disadv. stealth, swim" },
+    { "name": "Plate mail", "cost": "130 gp", "slots": "3", "ac": "15", "properties": "No swim, disadv. stealth" },
+    { "name": "Shield", "cost": "10 gp", "slots": "1", "ac": "+2", "properties": "Occupies one hand" },
+    { "name": "Mithral (metal armor)", "cost": "x4 cost", "slots": "-1 slot", "ac": "-", "properties": "No stealth/swim penalty" }
+  ],
+  "gear": [
+    { "name": "Arrows (20)", "cost": "1 gp", "slots": "1" },
+    { "name": "Backpack", "cost": "2 gp", "slots": "0 (first free)" },
+    { "name": "Caltrops (one bag)", "cost": "5 sp", "slots": "1" },
+    { "name": "Crossbow bolts (20)", "cost": "1 gp", "slots": "1" },
+    { "name": "Crowbar", "cost": "5 sp", "slots": "1" },
+    { "name": "Flask or bottle", "cost": "3 sp", "slots": "1" },
+    { "name": "Flint and steel", "cost": "5 sp", "slots": "1" },
+    { "name": "Grappling hook", "cost": "1 gp", "slots": "1" },
+    { "name": "Iron spikes (10)", "cost": "1 gp", "slots": "1" },
+    { "name": "Lantern", "cost": "5 gp", "slots": "1" },
+    { "name": "Mirror", "cost": "10 gp", "slots": "1" },
+    { "name": "Oil, flask", "cost": "5 sp", "slots": "1" },
+    { "name": "Pole", "cost": "5 sp", "slots": "1" },
+    { "name": "Rations (3)", "cost": "5 sp", "slots": "1" },
+    { "name": "Rope, 60'", "cost": "1 gp", "slots": "1" },
+    { "name": "Torch", "cost": "5 sp", "slots": "1" }
+  ]
+}
