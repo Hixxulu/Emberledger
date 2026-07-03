@@ -11,12 +11,12 @@
 // and does not sync between devices.
 // ============================================================
 export const firebaseConfig = {
-  apiKey: "PASTE_API_KEY",
-  authDomain: "PASTE_PROJECT_ID.firebaseapp.com",
-  projectId: "PASTE_PROJECT_ID",
-  storageBucket: "PASTE_PROJECT_ID.appspot.com",
-  messagingSenderId: "PASTE_SENDER_ID",
-  appId: "PASTE_APP_ID",
+  apiKey: "AIzaSyCmU-kTNMbEEm1Q6d5cr6bYxYfKbLbohPU",
+  authDomain: "emberledger.firebaseapp.com",
+  projectId: "emberledger",
+  storageBucket: "emberledger.firebasestorage.app",
+  messagingSenderId: "983957154368",
+  appId: "1:983957154368:web:2ba2fa745d06377af30da5",
 };
 
 // Optional soft passcode gate for the party. Leave "" for an open
