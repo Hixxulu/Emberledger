@@ -5,3 +5,6 @@ Vermis/
 
 # Local machine settings
 .claude/settings.local.json
+
+# Party data snapshots — private, restore from these locally
+backups/
