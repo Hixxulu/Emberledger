@@ -53,6 +53,54 @@ function normalizeChar(slug, data) {
   return deepMerge(defaultCharacter(""), data || {});
 }
 
+/* ---------------- shared party state (light timer, battle) ---------------- */
+
+// Lives in a reserved document inside the characters collection so the
+// existing Firestore rules cover it. Meta slugs are hidden from rosters.
+const PARTY_SLUG = "_party";
+const isMetaSlug = (s) => s.startsWith("_");
+
+function defaultParty() {
+  return { meta: true, lightUntil: 0, battle: { entries: [] } };
+}
+
+function partyOf(chars) {
+  return deepMerge(defaultParty(), chars[PARTY_SLUG] || {});
+}
+
+function fmtCountdown(ms) {
+  const m = Math.floor(ms / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function lightCardHtml(party) {
+  const rem = (party.lightUntil || 0) - Date.now();
+  if (rem > 0) {
+    return `
+      <section class="card light-card lit">
+        <h2>Light</h2>
+        <p class="light-line">&#128293; Torchlight &mdash; <strong class="light-count">${fmtCountdown(rem)}</strong> remaining</p>
+        <div class="light-tools">
+          <button class="btn small" data-action="light-1h">Fresh torch (1 hr)</button>
+          <button class="btn small danger" data-action="light-snuff">Snuff</button>
+        </div>
+      </section>`;
+  }
+  return `
+    <section class="card light-card dark">
+      <h2>Light</h2>
+      <p class="light-line dim"><em>The dark presses in. No light burns.</em></p>
+      <div class="light-tools">
+        <button class="btn small" data-action="light-1h">&#128293; Light a torch (1 hr)</button>
+      </div>
+    </section>`;
+}
+
+function battleSorted(party) {
+  return [...(party.battle.entries || [])].sort((a, b) => (Number(b.init) || 0) - (Number(a.init) || 0));
+}
+
 /* ---------------- storage (Firestore or device-only fallback) ---------------- */
 
 const store = { mode: "local", subscribe: null, subscribeAll: null, save: null, delete: null };
@@ -151,7 +199,7 @@ let seedChecked = false;
 function maybeSeed(chars) {
   if (seedChecked) return;
   seedChecked = true;
-  if (Object.keys(chars).length > 0) return;
+  if (Object.keys(chars).filter((s) => !isMetaSlug(s)).length > 0) return;
   if (localStorage.getItem("sd_seeded")) return;
   localStorage.setItem("sd_seeded", "1");
   // deferred so the writes (and their re-notifications) land after the
@@ -221,8 +269,9 @@ function renderHome() {
     ${modeBanner()}
     <header class="home-head">
       <h1 class="wordmark">Vermis</h1>
-      <p class="sub">Lost dungeons &amp; forbidden woods &mdash; a Shadowdark party tracker</p>
+      <p class="app-name">DM Hixx&rsquo;s Emberledger</p>
     </header>
+    <div id="party-status"></div>
     <section class="card">
       <h2>Active Characters</h2>
       <nav class="char-list" id="active-list"><p class="empty">Consulting the ledger&hellip;</p></nav>
@@ -241,11 +290,33 @@ function renderHome() {
     </nav>`;
 
   let latest = {};
+  let party = defaultParty();
+  let wasLit = false;
+
+  function paintPartyStatus() {
+    const box = document.getElementById("party-status");
+    if (!box) return;
+    const order = battleSorted(party);
+    const battleCard = order.length ? `
+      <section class="card battle-card">
+        <h2>Current Battle</h2>
+        <ol class="battle-order">
+          ${order.map((e) => `<li><span class="battle-init">${esc(e.init)}</span> ${esc(e.name)}</li>`).join("")}
+        </ol>
+        <p class="ref-meta">The DM manages initiative from the DM View.</p>
+      </section>` : "";
+    box.innerHTML = lightCardHtml(party) + battleCard;
+    wasLit = (party.lightUntil || 0) > Date.now();
+  }
 
   function paint(chars) {
     latest = chars;
     maybeSeed(chars);
-    const entries = Object.entries(chars).map(([slug, data]) => [slug, normalizeChar(slug, data)])
+    party = partyOf(chars);
+    paintPartyStatus();
+    const entries = Object.entries(chars)
+      .filter(([slug]) => !isMetaSlug(slug))
+      .map(([slug, data]) => [slug, normalizeChar(slug, data)])
       .sort((a, b) => (a[1].name || a[0]).localeCompare(b[1].name || b[0]));
     const active = entries.filter(([, c]) => c.active !== false);
     const fallen = entries.filter(([, c]) => c.active === false);
@@ -272,12 +343,32 @@ function renderHome() {
 
   cleanups.push(store.subscribeAll(paint));
 
+  // countdown tick
+  const tick = setInterval(() => {
+    const lit = (party.lightUntil || 0) > Date.now();
+    if (lit !== wasLit) { paintPartyStatus(); return; }
+    if (lit) {
+      const el = document.querySelector("#party-status .light-count");
+      if (el) el.textContent = fmtCountdown(party.lightUntil - Date.now());
+    }
+  }, 1000);
+  cleanups.push(() => clearInterval(tick));
+
+  document.getElementById("party-status").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn) return;
+    if (btn.dataset.action === "light-1h") party.lightUntil = Date.now() + 3600_000;
+    if (btn.dataset.action === "light-snuff") party.lightUntil = 0;
+    store.save(PARTY_SLUG, party);
+    paintPartyStatus();
+  });
+
   document.getElementById("new-char").addEventListener("submit", (e) => {
     e.preventDefault();
     const name = document.getElementById("new-char-name").value.trim();
     if (!name) return;
     let slug = slugify(name);
-    while (latest[slug]) slug += "_ii";
+    while (latest[slug] || isMetaSlug(slug)) slug = isMetaSlug(slug) ? slug.replace(/^_+/, "") || "adventurer" : slug + "_ii";
     store.save(slug, defaultCharacter(name));
     location.hash = `#/c/${encodeURIComponent(slug)}`;
   });
@@ -300,18 +391,25 @@ function renderHome() {
 
 /* ---------------- character sheet ---------------- */
 
+let sheetTab = sessionStorage.getItem("sd_tab") || "character";
+
 function renderSheet(slug) {
   let char = defaultCharacter("");
   let dirty = false;       // local edits not yet written
   let saveTimer = null;
   let loaded = false;
   let exists = false;
+  let party = defaultParty();
+  const openNotes = new Set(); // gear rows with the notes field expanded
 
   app.innerHTML = `
     ${modeBanner()}
     <header class="sheet-head">
       <a class="back" href="#/">&larr; Company</a>
-      <span id="save-status" class="save-status"></span>
+      <span class="head-right">
+        <span id="light-chip" class="light-chip"></span>
+        <span id="save-status" class="save-status"></span>
+      </span>
     </header>
     <div id="sheet"></div>`;
 
@@ -334,27 +432,55 @@ function renderSheet(slug) {
     `<label class="field"><span>${label}</span>
       <input type="number" inputmode="numeric" data-path="${path}" value="${esc(value)}" ${opts}></label>`;
 
+  function atkTotal(a) {
+    if (!a.stat) return null;
+    return abilityMod(char.stats[a.stat]) + (parseInt(a.bonus, 10) || 0);
+  }
+
+  function atkTotalText(a) {
+    const t = atkTotal(a);
+    if (t === null) return "";
+    const misc = parseInt(a.bonus, 10) || 0;
+    const parts = [`${a.stat.toUpperCase()} ${fmtMod(abilityMod(char.stats[a.stat]))}`];
+    if (misc) parts.push(`bonus ${fmtMod(misc)}`);
+    return `To hit ${fmtMod(t)} (${parts.join(", ")})`;
+  }
+
   function attacksRows() {
     if (!char.attacks.length) return `<p class="empty">No attacks yet.</p>`;
+    const statOpts = (sel) => ["", "str", "dex"].map((v) =>
+      `<option value="${v}" ${sel === v ? "selected" : ""}>${v ? v.toUpperCase() : "–"}</option>`).join("");
     return char.attacks.map((a, i) => `
       <div class="row attack-row">
         <input type="text" placeholder="Name" data-path="attacks.${i}.name" value="${esc(a.name)}">
-        <input type="text" placeholder="+0" class="narrow" data-path="attacks.${i}.bonus" value="${esc(a.bonus)}">
+        <select data-path="attacks.${i}.stat" title="Attack stat — auto-adds its modifier">${statOpts(a.stat || "")}</select>
+        <input type="text" placeholder="+0" class="narrow" title="Flat bonus: talents, mastery, magic"
+          data-path="attacks.${i}.bonus" value="${esc(a.bonus)}">
         <input type="text" placeholder="1d6" class="narrow" data-path="attacks.${i}.damage" value="${esc(a.damage)}">
         <button class="del" data-action="del" data-list="attacks" data-idx="${i}" title="Remove">&times;</button>
+        <span class="atk-total" data-idx="${i}">${esc(atkTotalText(a))}</span>
       </div>`).join("");
   }
 
   function gearRows() {
     if (!char.gear.length) return `<p class="empty">Empty-handed in the dark.</p>`;
+    const last = char.gear.length - 1;
     return char.gear.map((g, i) => `
       <div class="row gear-row">
+        <span class="movers">
+          <button class="mv" data-action="move" data-list="gear" data-idx="${i}" data-d="-1" ${i === 0 ? "disabled" : ""} title="Move up">&#9650;</button>
+          <button class="mv" data-action="move" data-list="gear" data-idx="${i}" data-d="1" ${i === last ? "disabled" : ""} title="Move down">&#9660;</button>
+        </span>
         <input type="text" placeholder="Item" data-path="gear.${i}.name" value="${esc(g.name)}">
         <input type="number" inputmode="decimal" step="any" min="0" class="narrow" title="Slots each"
           data-path="gear.${i}.slots" value="${esc(g.slots)}">
         <input type="number" inputmode="numeric" min="1" class="narrow" title="Quantity"
           data-path="gear.${i}.quantity" value="${esc(g.quantity)}">
+        <button class="nbtn ${(g.notes || "").trim() ? "has" : ""}" data-action="gnotes" data-idx="${i}" title="Item details">&#9998;</button>
         <button class="del" data-action="del" data-list="gear" data-idx="${i}" title="Remove">&times;</button>
+        <textarea class="notes gear-notes ${openNotes.has(i) ? "" : "hidden"}" rows="2"
+          placeholder="Details — what it does, where it came from…"
+          data-path="gear.${i}.notes">${esc(g.notes || "")}</textarea>
       </div>`).join("");
   }
 
@@ -398,6 +524,13 @@ function renderSheet(slug) {
       </div>`;
   }
 
+  function applyTab() {
+    sheet.querySelectorAll("[data-panel]").forEach((p) =>
+      p.classList.toggle("hidden", p.dataset.panel !== sheetTab));
+    sheet.querySelectorAll(".stab").forEach((b) =>
+      b.classList.toggle("active", b.dataset.stab === sheetTab));
+  }
+
   function render() {
     const s = char.stats;
     const total = gearTotal();
@@ -407,82 +540,108 @@ function renderSheet(slug) {
     sheet.innerHTML = `
       <input class="name-input" type="text" data-path="name" value="${esc(char.name)}" placeholder="Character name">
 
-      <section class="card">
-        <div class="grid2">
-          ${textField("Ancestry", "ancestry", char.ancestry)}
-          ${textField("Class", "class", char.class)}
-          ${textField("Title", "title", char.title)}
-          ${textField("Alignment", "alignment", char.alignment)}
-          ${textField("Background", "background", char.background)}
-          ${textField("Deity", "deity", char.deity)}
-        </div>
-      </section>
+      <nav class="sheet-tabs">
+        <button class="stab" data-stab="character">Stats</button>
+        <button class="stab" data-stab="combat">Combat</button>
+        <button class="stab" data-stab="gear">Gear</button>
+        <button class="stab" data-stab="magic">Spells</button>
+      </nav>
 
-      <section class="card">
-        <h2>Stats</h2>
-        <div class="stats-grid">
-          ${ABILITIES.map((a) => `
-            <div class="stat-box">
-              <span class="stat-label">${a.toUpperCase()}</span>
-              <input type="number" inputmode="numeric" min="1" max="20" data-path="stats.${a}" value="${esc(s[a])}">
-              <span class="stat-mod" id="mod-${a}">${fmtMod(abilityMod(s[a]))}</span>
-            </div>`).join("")}
-        </div>
-      </section>
+      <div data-panel="character">
+        <section class="card">
+          <div class="grid2">
+            ${textField("Ancestry", "ancestry", char.ancestry)}
+            ${textField("Class", "class", char.class)}
+            ${textField("Title", "title", char.title)}
+            ${textField("Alignment", "alignment", char.alignment)}
+            ${textField("Background", "background", char.background)}
+            ${textField("Deity", "deity", char.deity)}
+          </div>
+        </section>
 
-      <section class="card">
-        <h2>Vitals</h2>
-        <div class="vitals">
-          <div class="hp-block">
-            <span class="vital-label">HP</span>
-            <div class="hp-controls">
-              <button class="bump" data-action="hp" data-d="-1">&minus;</button>
-              <input type="number" inputmode="numeric" data-path="hp.current" value="${esc(char.hp.current)}">
-              <span class="hp-sep">/</span>
-              <input type="number" inputmode="numeric" data-path="hp.max" value="${esc(char.hp.max)}">
-              <button class="bump" data-action="hp" data-d="1">+</button>
+        <section class="card">
+          <h2>Stats</h2>
+          <div class="stats-grid">
+            ${ABILITIES.map((a) => `
+              <div class="stat-box">
+                <span class="stat-label">${a.toUpperCase()}</span>
+                <input type="number" inputmode="numeric" min="1" max="20" data-path="stats.${a}" value="${esc(s[a])}">
+                <span class="stat-mod" id="mod-${a}">${fmtMod(abilityMod(s[a]))}</span>
+              </div>`).join("")}
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Vitals</h2>
+          <div class="vitals">
+            <div class="counter-row">
+              <div class="hp-block">
+                <span class="vital-label">HP</span>
+                <div class="hp-controls">
+                  <button class="bump" data-action="hp" data-d="-1">&minus;</button>
+                  <input type="number" inputmode="numeric" data-path="hp.current" value="${esc(char.hp.current)}">
+                  <span class="hp-sep">/</span>
+                  <input type="number" inputmode="numeric" data-path="hp.max" value="${esc(char.hp.max)}">
+                  <button class="bump" data-action="hp" data-d="1">+</button>
+                </div>
+              </div>
+              <div class="luck-block">
+                <span class="vital-label">Luck tokens</span>
+                <div class="hp-controls">
+                  <button class="bump" data-action="luck" data-d="-1">&minus;</button>
+                  <input type="number" inputmode="numeric" min="0" data-path="luck" value="${esc(char.luck)}">
+                  <button class="bump" data-action="luck" data-d="1">+</button>
+                </div>
+              </div>
+            </div>
+            <div class="vital-row">
+              ${numField("AC", "ac", char.ac, 'min="0"')}
+              ${numField("Level", "level", char.level, 'min="1" max="10"')}
+              ${numField("XP", "xp", char.xp, 'min="0"')}
             </div>
           </div>
-          <div class="vital-row">
-            ${numField("AC", "ac", char.ac, 'min="0"')}
-            ${numField("Level", "level", char.level, 'min="1" max="10"')}
-            ${numField("XP", "xp", char.xp, 'min="0"')}
+        </section>
+      </div>
+
+      <div data-panel="combat">
+        <section class="card">
+          <h2>Attacks</h2>
+          <div class="row head-row head-attacks"><span>Name</span><span>Stat</span><span>Bonus</span><span>Damage</span><span class="del-spacer"></span></div>
+          <div id="attacks-list">${attacksRows()}</div>
+          <button class="btn add" data-action="add" data-list="attacks">+ Add attack</button>
+          <p class="ref-meta">Pick a stat and the modifier is added automatically. Put talent, mastery, and ancestry bonuses in the Bonus box.</p>
+        </section>
+      </div>
+
+      <div data-panel="gear">
+        <section class="card">
+          <h2>Gear <span class="gear-total ${total > cap ? "warn" : ""}" id="gear-total">${total} / ${cap} slots</span></h2>
+          <div class="row head-row head-gear"><span></span><span>Item</span><span>Slots</span><span>Qty</span><span></span><span class="del-spacer"></span></div>
+          <div id="gear-list">${gearRows()}</div>
+          <div class="gear-tools">
+            <button class="btn add" data-action="add" data-list="gear">+ Add gear</button>
+            <select id="gear-picker">
+              <option value="">+ From gear list&hellip;</option>
+              ${gearOptions}
+            </select>
+            <button class="btn add" data-action="kit" title="Backpack, flint &amp; steel, 2 torches, rations, spikes, hook, rope — 7 gp">+ Crawling kit</button>
           </div>
-        </div>
-      </section>
+          <div class="coins">
+            ${numField("GP", "coins.gp", char.coins.gp, 'min="0"')}
+            ${numField("SP", "coins.sp", char.coins.sp, 'min="0"')}
+            ${numField("CP", "coins.cp", char.coins.cp, 'min="0"')}
+          </div>
+        </section>
+      </div>
 
-      <section class="card">
-        <h2>Attacks</h2>
-        <div class="row head-row"><span>Name</span><span class="narrow">Bonus</span><span class="narrow">Damage</span><span class="del-spacer"></span></div>
-        <div id="attacks-list">${attacksRows()}</div>
-        <button class="btn add" data-action="add" data-list="attacks">+ Add attack</button>
-      </section>
-
-      <section class="card">
-        <h2>Gear <span class="gear-total ${total > cap ? "warn" : ""}" id="gear-total">${total} / ${cap} slots</span></h2>
-        <div class="row head-row"><span>Item</span><span class="narrow">Slots</span><span class="narrow">Qty</span><span class="del-spacer"></span></div>
-        <div id="gear-list">${gearRows()}</div>
-        <div class="gear-tools">
-          <button class="btn add" data-action="add" data-list="gear">+ Add gear</button>
-          <select id="gear-picker">
-            <option value="">+ From gear list&hellip;</option>
-            ${gearOptions}
-          </select>
-          <button class="btn add" data-action="kit" title="Backpack, flint &amp; steel, 2 torches, rations, spikes, hook, rope — 7 gp">+ Crawling kit</button>
-        </div>
-        <div class="coins">
-          ${numField("GP", "coins.gp", char.coins.gp, 'min="0"')}
-          ${numField("SP", "coins.sp", char.coins.sp, 'min="0"')}
-          ${numField("CP", "coins.cp", char.coins.cp, 'min="0"')}
-        </div>
-      </section>
-
-      <section class="card">
-        <h2>Talents &amp; Spells</h2>
-        <div id="cast-block">${spellcastingBlock()}</div>
-        <div id="talents-list">${talentRows()}</div>
-        <button class="btn add" data-action="add" data-list="talentsAndSpells">+ Add talent / spell</button>
-      </section>
+      <div data-panel="magic">
+        <section class="card">
+          <h2>Talents &amp; Spells</h2>
+          <div id="cast-block">${spellcastingBlock()}</div>
+          <div id="talents-list">${talentRows()}</div>
+          <button class="btn add" data-action="add" data-list="talentsAndSpells">+ Add talent / spell</button>
+        </section>
+      </div>
 
       <section class="grave-tools">
         ${char.active !== false
@@ -490,6 +649,7 @@ function renderSheet(slug) {
           : `<div class="banner red">This character lies among the fallen.</div>
              <button class="btn" data-action="revive">Return to the living</button>`}
       </section>`;
+    applyTab();
   }
 
   /* ----- derived values ----- */
@@ -512,6 +672,10 @@ function renderSheet(slug) {
     }
     const castEl = document.getElementById("cast-block");
     if (castEl) castEl.innerHTML = spellcastingBlock();
+    sheet.querySelectorAll(".atk-total").forEach((el) => {
+      const a = char.attacks[Number(el.dataset.idx)];
+      el.textContent = a ? atkTotalText(a) : "";
+    });
   }
 
   /* ----- saving ----- */
@@ -543,7 +707,7 @@ function renderSheet(slug) {
   function applyRemote(data) {
     char = normalizeChar(slug, data);
     const active = document.activeElement;
-    const editing = active && sheet.contains(active) && (active.matches("input, select"));
+    const editing = active && sheet.contains(active) && (active.matches("input, select, textarea"));
     if (!loaded || !editing) {
       render();
       loaded = true;
@@ -560,7 +724,7 @@ function renderSheet(slug) {
   }
 
   const unsub = store.subscribe(slug, (data, pending) => {
-    if (pending) return;          // echo of our own write
+    if (pending && loaded) return; // echo of our own write (but never skip the initial load)
     if (data) exists = true;
     if (dirty) return;            // don't clobber in-flight local edits
     if (!data && !exists && loaded) return; // deleted elsewhere; keep local view
@@ -568,6 +732,17 @@ function renderSheet(slug) {
     if (statusEl.textContent.startsWith("Loading")) setStatus("");
   });
   cleanups.push(unsub, () => { clearTimeout(saveTimer); if (dirty) doSave(); });
+
+  // light chip in the header (shared party state)
+  function paintChip() {
+    const chip = document.getElementById("light-chip");
+    if (!chip) return;
+    const rem = (party.lightUntil || 0) - Date.now();
+    chip.textContent = rem > 0 ? `\u{1F525} ${fmtCountdown(rem)}` : "";
+  }
+  cleanups.push(store.subscribe(PARTY_SLUG, (data) => { party = deepMerge(defaultParty(), data || {}); paintChip(); }));
+  const chipTick = setInterval(paintChip, 1000);
+  cleanups.push(() => clearInterval(chipTick));
 
   /* ----- events (delegated) ----- */
 
@@ -594,27 +769,37 @@ function renderSheet(slug) {
     const idx = e.target.value;
     if (idx === "") return;
     const g = GEAR_CATALOG[Number(idx)];
-    char.gear.push({ name: g.name, slots: g.slots, quantity: 1 });
+    char.gear.push({ name: g.name, slots: g.slots, quantity: 1, notes: "" });
     render();
     updateDerived();
     scheduleSave();
   });
 
   sheet.addEventListener("click", (e) => {
+    const tab = e.target.closest(".stab");
+    if (tab) {
+      sheetTab = tab.dataset.stab;
+      sessionStorage.setItem("sd_tab", sheetTab);
+      applyTab();
+      return;
+    }
     const btn = e.target.closest("button[data-action]");
     if (!btn) return;
     const action = btn.dataset.action;
-    if (action === "hp") {
-      char.hp.current = (Number(char.hp.current) || 0) + Number(btn.dataset.d);
-      const el = sheet.querySelector('[data-path="hp.current"]');
-      if (el) el.value = char.hp.current;
+    if (action === "hp" || action === "luck") {
+      const path = action === "hp" ? "hp.current" : "luck";
+      let v = (Number(getPath(char, path)) || 0) + Number(btn.dataset.d);
+      if (action === "luck") v = Math.max(0, v);
+      setPath(char, path, v);
+      const el = sheet.querySelector(`[data-path="${path}"]`);
+      if (el) el.value = v;
       scheduleSave();
       return;
     }
     if (action === "add") {
       const list = btn.dataset.list;
-      if (list === "attacks") char.attacks.push({ name: "", bonus: "", damage: "" });
-      if (list === "gear") char.gear.push({ name: "", slots: 1, quantity: 1 });
+      if (list === "attacks") char.attacks.push({ name: "", stat: "", bonus: "", damage: "" });
+      if (list === "gear") char.gear.push({ name: "", slots: 1, quantity: 1, notes: "" });
       if (list === "talentsAndSpells") char.talentsAndSpells.push({ name: "", type: "talent", tier: "", notes: "" });
       render();
       updateDerived();
@@ -624,14 +809,41 @@ function renderSheet(slug) {
       return;
     }
     if (action === "kit") {
-      char.gear.push(...CRAWLING_KIT.map((g) => ({ ...g })));
+      char.gear.push(...CRAWLING_KIT.map((g) => ({ ...g, notes: "" })));
       render();
       updateDerived();
       scheduleSave();
       return;
     }
+    if (action === "move") {
+      const list = btn.dataset.list;
+      const i = Number(btn.dataset.idx);
+      const j = i + Number(btn.dataset.d);
+      const arr = char[list];
+      if (j < 0 || j >= arr.length) return;
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+      openNotes.clear();
+      render();
+      scheduleSave();
+      return;
+    }
+    if (action === "gnotes") {
+      const i = Number(btn.dataset.idx);
+      if (openNotes.has(i)) openNotes.delete(i); else openNotes.add(i);
+      const ta = btn.closest(".gear-row")?.querySelector(".gear-notes");
+      if (ta) {
+        ta.classList.toggle("hidden", !openNotes.has(i));
+        if (openNotes.has(i)) ta.focus();
+      }
+      return;
+    }
     if (action === "del") {
-      char[btn.dataset.list].splice(Number(btn.dataset.idx), 1);
+      const list = btn.dataset.list;
+      const i = Number(btn.dataset.idx);
+      const label = (char[list][i]?.name || "").trim();
+      if (label && !confirm(`Remove "${label}"?`)) return;
+      char[list].splice(i, 1);
+      openNotes.clear();
       render();
       updateDerived();
       scheduleSave();
@@ -661,18 +873,56 @@ function renderDM() {
       <a class="back" href="#/">&larr; Company</a>
       <h1 class="dm-title">DM View</h1>
     </header>
+    <div id="party-tools"></div>
     <div class="dm-grid" id="dm-grid"><p class="empty">Consulting the ledger&hellip;</p></div>`;
 
   const grid = document.getElementById("dm-grid");
+  const toolsEl = document.getElementById("party-tools");
   const state = {}; // slug -> normalized char
+  let party = defaultParty();
+  let wasLit = false;
+
+  function battleEditorHtml() {
+    const entries = battleSorted(party);
+    party.battle.entries = entries; // keep stored order = display order
+    return `
+      <section class="card battle-card" id="battle-editor">
+        <h2>Current Battle</h2>
+        ${entries.length ? `
+          <div class="battle-rows">
+            ${entries.map((en, i) => `
+              <div class="row battle-row">
+                <input type="number" inputmode="numeric" class="narrow" data-bt="init" data-idx="${i}" value="${esc(en.init)}" title="Initiative">
+                <input type="text" data-bt="name" data-idx="${i}" value="${esc(en.name)}" placeholder="Combatant">
+                <button class="del" data-action="bt-del" data-idx="${i}" title="Remove">&times;</button>
+              </div>`).join("")}
+          </div>` : `<p class="empty">No battle raging. Add combatants to begin.</p>`}
+        <div class="row battle-row battle-add">
+          <input type="number" inputmode="numeric" class="narrow" id="bt-init" placeholder="Init">
+          <input type="text" id="bt-name" placeholder="Add combatant (PC or foe)&hellip;">
+          <button class="btn small" data-action="bt-add">Add</button>
+        </div>
+        ${entries.length ? `<button class="btn small danger" data-action="bt-end">End battle &amp; clear</button>` : ""}
+        <p class="ref-meta">Players see this order on the home page.</p>
+      </section>`;
+  }
+
+  function paintTools() {
+    const active = document.activeElement;
+    if (active && toolsEl.contains(active) && active.matches("input")) return; // don't clobber typing
+    toolsEl.innerHTML = lightCardHtml(party) + battleEditorHtml();
+    wasLit = (party.lightUntil || 0) > Date.now();
+  }
 
   function cardHtml(slug, c) {
     const info = casterInfo(c.class);
     const total = c.gear.reduce((s, g) => s + (Number(g.slots) || 0) * (Number(g.quantity) || 1), 0);
     const cap = freeToCarry(c.stats.str);
     const subtitle = [c.title, `Lvl ${c.level}`, c.ancestry, c.class].filter(Boolean).join(" · ");
-    const atks = c.attacks.filter((a) => a.name).map((a) =>
-      `<li>${esc(a.name)} <span class="dim">${esc(a.bonus)}${a.damage ? ", " + esc(a.damage) : ""}</span></li>`).join("");
+    const atks = c.attacks.filter((a) => a.name).map((a) => {
+      const t = a.stat ? fmtMod(abilityMod(c.stats[a.stat]) + (parseInt(a.bonus, 10) || 0)) : (a.bonus || "");
+      return `<li>${esc(a.name)} <span class="dim">${esc(t)}${a.damage ? ", " + esc(a.damage) : ""}</span></li>`;
+    }).join("");
     const talents = c.talentsAndSpells.filter((t) => t.name).map((t) =>
       `<li>${esc(t.name)}${t.type === "spell" ? ` <span class="dim">(spell${t.tier ? " T" + esc(t.tier) : ""})</span>` : ""}</li>`).join("");
     const hpLow = c.hp.max > 0 && c.hp.current <= Math.ceil(c.hp.max / 2);
@@ -686,6 +936,7 @@ function renderDM() {
           <button class="bump" data-d="1">+</button>
         </div>
         <span class="dm-ac">AC ${esc(c.ac)}</span>
+        <span class="dim">Luck ${esc(c.luck || 0)}</span>
         <span class="dim">XP ${esc(c.xp)}</span>
       </div>
       <div class="dm-stats">
@@ -698,7 +949,11 @@ function renderDM() {
   }
 
   function paint(chars) {
-    const entries = Object.entries(chars).map(([slug, data]) => [slug, normalizeChar(slug, data)])
+    party = partyOf(chars);
+    paintTools();
+    const entries = Object.entries(chars)
+      .filter(([slug]) => !isMetaSlug(slug))
+      .map(([slug, data]) => [slug, normalizeChar(slug, data)])
       .filter(([, c]) => c.active !== false)
       .sort((a, b) => (a[1].name || a[0]).localeCompare(b[1].name || b[0]));
     for (const k of Object.keys(state)) delete state[k];
@@ -722,6 +977,50 @@ function renderDM() {
     store.save(slug, c);
     btn.closest(".dm-card").innerHTML = cardHtml(slug, c);
   });
+
+  toolsEl.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn) return;
+    const action = btn.dataset.action;
+    if (action === "light-1h") party.lightUntil = Date.now() + 3600_000;
+    if (action === "light-snuff") party.lightUntil = 0;
+    if (action === "bt-add") {
+      const name = document.getElementById("bt-name").value.trim();
+      const init = Number(document.getElementById("bt-init").value) || 0;
+      if (!name) return;
+      party.battle.entries.push({ name, init });
+    }
+    if (action === "bt-del") party.battle.entries.splice(Number(btn.dataset.idx), 1);
+    if (action === "bt-end") {
+      if (!confirm("End the battle and clear the initiative order?")) return;
+      party.battle.entries = [];
+    }
+    store.save(PARTY_SLUG, party);
+    if (document.activeElement) document.activeElement.blur();
+    paintTools();
+  });
+
+  toolsEl.addEventListener("input", (e) => {
+    const bt = e.target.dataset?.bt;
+    if (!bt) return;
+    const en = party.battle.entries[Number(e.target.dataset.idx)];
+    if (!en) return;
+    en[bt] = bt === "init" ? (Number(e.target.value) || 0) : e.target.value;
+    store.save(PARTY_SLUG, party);
+  });
+  toolsEl.addEventListener("change", (e) => {
+    if (e.target.dataset?.bt === "init") paintTools(); // re-sort once editing ends
+  });
+
+  const tick = setInterval(() => {
+    const lit = (party.lightUntil || 0) > Date.now();
+    if (lit !== wasLit) { paintTools(); return; }
+    if (lit) {
+      const el = toolsEl.querySelector(".light-count");
+      if (el) el.textContent = fmtCountdown(party.lightUntil - Date.now());
+    }
+  }, 1000);
+  cleanups.push(() => clearInterval(tick));
 
   cleanups.push(store.subscribeAll(paint));
 }
