@@ -1,4 +1,4 @@
-import { firebaseConfig, APP_PASSCODE } from "./firebase-config.js";
+import { firebaseConfig, APP_PASSCODE, DM_PASSCODE } from "./firebase-config.js";
 import {
   DEFAULT_PARTY, ABILITIES, abilityMod, fmtMod, freeToCarry,
   casterInfo, spellsKnownAtLevel, defaultCharacter, slugify,
@@ -99,6 +99,17 @@ function lightCardHtml(party) {
 
 function battleSorted(party) {
   return [...(party.battle.entries || [])].sort((a, b) => (Number(b.init) || 0) - (Number(a.init) || 0));
+}
+
+// DM-managed NPCs, in their own reserved document.
+const NPCS_SLUG = "_npcs";
+
+function defaultNpcs() {
+  return { meta: true, npcs: [] };
+}
+
+function npcsOf(chars) {
+  return deepMerge(defaultNpcs(), chars[NPCS_SLUG] || {});
 }
 
 /* ---------------- storage (Firestore or device-only fallback) ---------------- */
@@ -484,14 +495,18 @@ function renderSheet(slug) {
       </div>`).join("");
   }
 
-  function talentRows() {
-    if (!char.talentsAndSpells.length) return `<p class="empty">Nothing recorded yet.</p>`;
+  // Renders only entries of one type; indexes still point into the shared
+  // talentsAndSpells array. Flipping a row's type moves it to the other card.
+  function talentRows(type) {
     const tierOpts = (sel) => ["", 1, 2, 3, 4, 5].map((t) =>
       `<option value="${t}" ${String(sel ?? "") === String(t) ? "selected" : ""}>${t === "" ? "Tier –" : "Tier " + t}</option>`).join("");
-    return char.talentsAndSpells.map((t, i) => `
+    const rows = char.talentsAndSpells
+      .map((t, i) => [t, i])
+      .filter(([t]) => (t.type === "spell") === (type === "spell"))
+      .map(([t, i]) => `
       <div class="row talent-row">
         <input type="text" placeholder="Name" data-path="talentsAndSpells.${i}.name" value="${esc(t.name)}">
-        <select data-path="talentsAndSpells.${i}.type">
+        <select data-path="talentsAndSpells.${i}.type" title="Move between Spells and Talents">
           <option value="talent" ${t.type !== "spell" ? "selected" : ""}>Talent</option>
           <option value="spell" ${t.type === "spell" ? "selected" : ""}>Spell</option>
         </select>
@@ -500,7 +515,11 @@ function renderSheet(slug) {
         </select>
         <button class="del" data-action="del" data-list="talentsAndSpells" data-idx="${i}" title="Remove">&times;</button>
         <input type="text" class="notes" placeholder="Notes" data-path="talentsAndSpells.${i}.notes" value="${esc(t.notes)}">
-      </div>`).join("");
+      </div>`);
+    if (!rows.length) {
+      return `<p class="empty">${type === "spell" ? "No spells inscribed." : "No talents earned."}</p>`;
+    }
+    return rows.join("");
   }
 
   function spellcastingBlock() {
@@ -542,9 +561,9 @@ function renderSheet(slug) {
 
       <nav class="sheet-tabs">
         <button class="stab" data-stab="character">Stats</button>
-        <button class="stab" data-stab="combat">Combat</button>
+        <button class="stab" data-stab="combat">Weapons</button>
         <button class="stab" data-stab="gear">Gear</button>
-        <button class="stab" data-stab="magic">Spells</button>
+        <button class="stab" data-stab="magic">Spells/Talents</button>
       </nav>
 
       <div data-panel="character">
@@ -605,10 +624,10 @@ function renderSheet(slug) {
 
       <div data-panel="combat">
         <section class="card">
-          <h2>Attacks</h2>
+          <h2>Weapons</h2>
           <div class="row head-row head-attacks"><span>Name</span><span>Stat</span><span>Bonus</span><span>Damage</span><span class="del-spacer"></span></div>
           <div id="attacks-list">${attacksRows()}</div>
-          <button class="btn add" data-action="add" data-list="attacks">+ Add attack</button>
+          <button class="btn add" data-action="add" data-list="attacks">+ Add weapon</button>
           <p class="ref-meta">Pick a stat and the modifier is added automatically. Put talent, mastery, and ancestry bonuses in the Bonus box.</p>
         </section>
       </div>
@@ -636,10 +655,15 @@ function renderSheet(slug) {
 
       <div data-panel="magic">
         <section class="card">
-          <h2>Talents &amp; Spells</h2>
+          <h2>Spells</h2>
           <div id="cast-block">${spellcastingBlock()}</div>
-          <div id="talents-list">${talentRows()}</div>
-          <button class="btn add" data-action="add" data-list="talentsAndSpells">+ Add talent / spell</button>
+          <div id="spells-list">${talentRows("spell")}</div>
+          <button class="btn add" data-action="add" data-list="talentsAndSpells" data-type="spell">+ Add spell</button>
+        </section>
+        <section class="card">
+          <h2>Talents</h2>
+          <div id="talents-list">${talentRows("talent")}</div>
+          <button class="btn add" data-action="add" data-list="talentsAndSpells" data-type="talent">+ Add talent</button>
         </section>
       </div>
 
@@ -750,15 +774,14 @@ function renderSheet(slug) {
     const path = e.target.dataset?.path;
     if (!path) return;
     setPath(char, path, coerce(e.target));
-    // switching an entry to "talent" clears its tier
+    // switching type moves the entry between the Spells and Talents cards
     if (path.endsWith(".type")) {
       const idx = path.split(".")[1];
-      const row = e.target.closest(".talent-row");
-      const tierSel = row?.querySelector("select[data-path$='.tier']");
-      if (tierSel) {
-        tierSel.disabled = e.target.value !== "spell";
-        if (e.target.value !== "spell") { tierSel.value = ""; setPath(char, `talentsAndSpells.${idx}.tier`, ""); }
-      }
+      if (e.target.value !== "spell") setPath(char, `talentsAndSpells.${idx}.tier`, "");
+      render();
+      updateDerived();
+      scheduleSave();
+      return;
     }
     updateDerived();
     scheduleSave();
@@ -800,11 +823,12 @@ function renderSheet(slug) {
       const list = btn.dataset.list;
       if (list === "attacks") char.attacks.push({ name: "", stat: "", bonus: "", damage: "" });
       if (list === "gear") char.gear.push({ name: "", slots: 1, quantity: 1, notes: "" });
-      if (list === "talentsAndSpells") char.talentsAndSpells.push({ name: "", type: "talent", tier: "", notes: "" });
+      if (list === "talentsAndSpells") char.talentsAndSpells.push({ name: "", type: btn.dataset.type || "talent", tier: "", notes: "" });
       render();
       updateDerived();
       scheduleSave();
-      const rows = document.getElementById(`${list === "talentsAndSpells" ? "talents" : list}-list`).querySelectorAll(".row:not(.head-row)");
+      const listId = list === "talentsAndSpells" ? (btn.dataset.type === "spell" ? "spells" : "talents") : list;
+      const rows = document.getElementById(`${listId}-list`).querySelectorAll(".row:not(.head-row)");
       rows[rows.length - 1]?.querySelector("input")?.focus();
       return;
     }
@@ -867,6 +891,30 @@ function renderSheet(slug) {
 /* ---------------- DM view ---------------- */
 
 function renderDM() {
+  if (DM_PASSCODE && localStorage.getItem("sd_dm_gate") !== DM_PASSCODE) {
+    app.innerHTML = `
+      <div class="gate">
+        <h1 class="wordmark">DM View</h1>
+        <p>The Game Master&rsquo;s seal bars the way.</p>
+        <form id="dm-gate-form">
+          <input type="password" id="dm-gate-input" autocomplete="off" autofocus>
+          <button type="submit" class="btn primary">Enter</button>
+          <p id="dm-gate-err" class="gate-err hidden">The seal holds.</p>
+        </form>
+        <p><a href="#/">&larr; Back to the company</a></p>
+      </div>`;
+    document.getElementById("dm-gate-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      if (document.getElementById("dm-gate-input").value === DM_PASSCODE) {
+        localStorage.setItem("sd_dm_gate", DM_PASSCODE);
+        renderDM();
+      } else {
+        document.getElementById("dm-gate-err").classList.remove("hidden");
+      }
+    });
+    return;
+  }
+
   app.innerHTML = `
     ${modeBanner()}
     <header class="sheet-head">
@@ -874,7 +922,8 @@ function renderDM() {
       <h1 class="dm-title">DM View</h1>
     </header>
     <div id="party-tools"></div>
-    <div class="dm-grid" id="dm-grid"><p class="empty">Consulting the ledger&hellip;</p></div>`;
+    <div class="dm-grid" id="dm-grid"><p class="empty">Consulting the ledger&hellip;</p></div>
+    <div id="npc-area"></div>`;
 
   const grid = document.getElementById("dm-grid");
   const toolsEl = document.getElementById("party-tools");
@@ -923,8 +972,10 @@ function renderDM() {
       const t = a.stat ? fmtMod(abilityMod(c.stats[a.stat]) + (parseInt(a.bonus, 10) || 0)) : (a.bonus || "");
       return `<li>${esc(a.name)} <span class="dim">${esc(t)}${a.damage ? ", " + esc(a.damage) : ""}</span></li>`;
     }).join("");
-    const talents = c.talentsAndSpells.filter((t) => t.name).map((t) =>
-      `<li>${esc(t.name)}${t.type === "spell" ? ` <span class="dim">(spell${t.tier ? " T" + esc(t.tier) : ""})</span>` : ""}</li>`).join("");
+    const spellsL = c.talentsAndSpells.filter((t) => t.name && t.type === "spell").map((t) =>
+      `<li>${esc(t.name)}${t.tier ? ` <span class="dim">T${esc(t.tier)}</span>` : ""}</li>`).join("");
+    const talentsL = c.talentsAndSpells.filter((t) => t.name && t.type !== "spell").map((t) =>
+      `<li>${esc(t.name)}</li>`).join("");
     const hpLow = c.hp.max > 0 && c.hp.current <= Math.ceil(c.hp.max / 2);
     return `
       <h3><a href="#/c/${encodeURIComponent(slug)}">${esc(c.name || slug)}</a></h3>
@@ -943,14 +994,16 @@ function renderDM() {
         ${ABILITIES.map((a) => `<span><b>${a.toUpperCase()}</b> ${esc(c.stats[a])} (${fmtMod(abilityMod(c.stats[a]))})</span>`).join("")}
       </div>
       ${info ? `<p class="dm-cast">Casts with ${info.label} ${fmtMod(abilityMod(c.stats[info.ability]))}</p>` : ""}
-      ${atks ? `<h4>Attacks</h4><ul>${atks}</ul>` : ""}
-      ${talents ? `<h4>Talents &amp; Spells</h4><ul>${talents}</ul>` : ""}
+      ${atks ? `<h4>Weapons</h4><ul>${atks}</ul>` : ""}
+      ${spellsL ? `<h4>Spells</h4><ul>${spellsL}</ul>` : ""}
+      ${talentsL ? `<h4>Talents</h4><ul>${talentsL}</ul>` : ""}
       <p class="dm-foot dim">Gear ${total}/${cap} slots · ${esc(c.coins.gp)} gp ${esc(c.coins.sp)} sp ${esc(c.coins.cp)} cp</p>`;
   }
 
   function paint(chars) {
     party = partyOf(chars);
     paintTools();
+    applyNpcRemote(chars);
     const entries = Object.entries(chars)
       .filter(([slug]) => !isMetaSlug(slug))
       .map(([slug, data]) => [slug, normalizeChar(slug, data)])
@@ -977,6 +1030,234 @@ function renderDM() {
     store.save(slug, c);
     btn.closest(".dm-card").innerHTML = cardHtml(slug, c);
   });
+
+  /* ----- NPC manager (below the party — the party stays on top) ----- */
+
+  const npcArea = document.getElementById("npc-area");
+  let npcDoc = defaultNpcs();
+  let lastNpcJson = JSON.stringify(npcDoc);
+  let npcDirty = false;
+  let npcTimer = null;
+  const npcOpen = new Set();       // expanded card ids
+  let monsterTemplates = null;
+
+  fetch("data/monsters.json").then((r) => r.json()).then((m) => {
+    monsterTemplates = m;
+    paintNpcs(true);
+  }).catch((err) => console.error("Monster templates failed to load:", err));
+
+  function blankNpc() {
+    return {
+      id: "n" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      name: "", disposition: "neutral", description: "",
+      level: 1, alignment: "", ac: 10, armor_type: "", movement: "near",
+      hp: { current: 1, max: 1 }, attack: "",
+      stats: { str: "+0", dex: "+0", con: "+0", int: "+0", wis: "+0", cha: "+0" },
+      actions: [],
+    };
+  }
+
+  function npcFromMonster(m) {
+    return {
+      ...blankNpc(), name: m.name, description: m.description, level: m.level,
+      alignment: m.alignment, ac: m.ac, armor_type: m.armor_type || "", movement: m.movement,
+      hp: { current: m.hp, max: m.hp }, attack: m.attack,
+      stats: { ...m.stats }, actions: (m.actions || []).map((a) => ({ ...a })),
+    };
+  }
+
+  const DISPOSITIONS = [["friendly", "Friendly"], ["neutral", "Neutral"], ["hostile", "Hostile"]];
+
+  function applyNpcRemote(chars) {
+    if (npcDirty) return;
+    const fresh = npcsOf(chars);
+    const j = JSON.stringify(fresh);
+    if (j === lastNpcJson) return;
+    npcDoc = fresh;
+    lastNpcJson = j;
+    paintNpcs();
+  }
+
+  function npcSaveNow() {
+    npcDirty = false;
+    clearTimeout(npcTimer);
+    lastNpcJson = JSON.stringify(npcDoc);
+    store.save(NPCS_SLUG, npcDoc);
+  }
+
+  function npcSaveSoon() {
+    npcDirty = true;
+    clearTimeout(npcTimer);
+    npcTimer = setTimeout(npcSaveNow, 600);
+  }
+  cleanups.push(() => { clearTimeout(npcTimer); if (npcDirty) npcSaveNow(); });
+
+  function npcCardHtml(n, i) {
+    const open = npcOpen.has(n.id);
+    const dispOpts = DISPOSITIONS.map(([v, l]) =>
+      `<option value="${v}" ${n.disposition === v ? "selected" : ""}>${l}</option>`).join("");
+    const actionRows = (n.actions || []).map((a, j) => `
+      <div class="row npc-action-row">
+        <input type="text" placeholder="Ability name" data-npath="npcs.${i}.actions.${j}.name" value="${esc(a.name)}">
+        <button class="del" data-action="npc-del-action" data-idx="${i}" data-j="${j}" title="Remove">&times;</button>
+        <textarea class="notes" rows="2" placeholder="What it does" data-npath="npcs.${i}.actions.${j}.description">${esc(a.description)}</textarea>
+      </div>`).join("");
+    const hpLow = n.hp.max > 0 && n.hp.current <= Math.ceil(n.hp.max / 2);
+    return `
+      <div class="npc-card ${esc(n.disposition)}">
+        <div class="npc-head">
+          <button class="npc-toggle" data-action="npc-toggle" data-id="${esc(n.id)}" title="Details">${open ? "&#9662;" : "&#9656;"}</button>
+          <input class="npc-name" type="text" placeholder="Name" data-npath="npcs.${i}.name" value="${esc(n.name)}">
+          <button class="del" data-action="npc-del" data-idx="${i}" title="Remove">&times;</button>
+        </div>
+        <div class="npc-quick">
+          <span class="pill">LV ${esc(n.level)}</span>
+          <label class="npc-mini">AC <input type="number" inputmode="numeric" data-npath="npcs.${i}.ac" value="${esc(n.ac)}"></label>
+          <span class="dm-hp ${hpLow ? "low" : ""}">
+            <button class="bump" data-action="npc-hp" data-idx="${i}" data-d="-1">&minus;</button>
+            <input type="number" inputmode="numeric" class="npc-hp-in" data-npath="npcs.${i}.hp.current" value="${esc(n.hp.current)}">
+            <span class="hp-sep">/</span>
+            <input type="number" inputmode="numeric" class="npc-hp-in" data-npath="npcs.${i}.hp.max" value="${esc(n.hp.max)}">
+            <button class="bump" data-action="npc-hp" data-idx="${i}" data-d="1">+</button>
+          </span>
+          <select data-npath="npcs.${i}.disposition" data-role="disp" title="Disposition">${dispOpts}</select>
+        </div>
+        <div class="npc-body ${open ? "" : "hidden"}">
+          <input type="text" class="notes" placeholder="Description / notes" data-npath="npcs.${i}.description" value="${esc(n.description)}">
+          <div class="npc-grid">
+            <label class="field"><span>Level</span><input type="number" inputmode="numeric" data-npath="npcs.${i}.level" data-num="1" value="${esc(n.level)}"></label>
+            <label class="field"><span>Alignment</span><input type="text" data-npath="npcs.${i}.alignment" value="${esc(n.alignment)}"></label>
+            <label class="field"><span>Movement</span><input type="text" data-npath="npcs.${i}.movement" value="${esc(n.movement)}"></label>
+            <label class="field"><span>Armor</span><input type="text" data-npath="npcs.${i}.armor_type" value="${esc(n.armor_type)}"></label>
+          </div>
+          <label class="field npc-attack"><span>Attacks</span>
+            <input type="text" placeholder="1 claw +2 (1d6)" data-npath="npcs.${i}.attack" value="${esc(n.attack)}"></label>
+          <div class="npc-stats">
+            ${ABILITIES.map((a) => `<label class="npc-stat"><span>${a.toUpperCase()}</span><input type="text" data-npath="npcs.${i}.stats.${a}" value="${esc(n.stats[a])}"></label>`).join("")}
+          </div>
+          <h4>Abilities</h4>
+          ${actionRows || `<p class="empty">None.</p>`}
+          <button class="btn add" data-action="npc-add-action" data-idx="${i}" data-id="${esc(n.id)}">+ Add ability</button>
+        </div>
+      </div>`;
+  }
+
+  function paintNpcs(force) {
+    const active = document.activeElement;
+    if (!force && active && npcArea.contains(active) && active.matches("input, select, textarea")) return;
+    const npcs = npcDoc.npcs.map((n) => deepMerge(blankNpc(), n));
+    npcDoc.npcs = npcs;
+    const sections = DISPOSITIONS.map(([v, label]) => {
+      const items = npcs.map((n, i) => [n, i]).filter(([n]) => (n.disposition || "neutral") === v);
+      const emptyText = v === "hostile" ? "No foes at hand." : v === "friendly" ? "No allies recorded." : "No one of note.";
+      return `
+        <section class="card npc-section npc-${v}">
+          <h2>${label} <span class="npc-count">${items.length}</span></h2>
+          ${items.length ? items.map(([n, i]) => npcCardHtml(n, i)).join("") : `<p class="empty">${emptyText}</p>`}
+          ${items.length ? `<button class="btn small danger npc-clear" data-action="npc-clear" data-disp="${v}">Clear all ${label.toLowerCase()}</button>` : ""}
+        </section>`;
+    }).join("");
+    npcArea.innerHTML = `
+      <section class="card npc-add-card">
+        <h2>NPCs &amp; Foes</h2>
+        <div class="npc-add-bar">
+          <select id="npc-template">
+            <option value="">Custom NPC (blank)</option>
+            ${monsterTemplates ? monsterTemplates.map((x, i) => `<option value="${i}">${esc(x.name)} (LV ${esc(x.level)})</option>`).join("") : ""}
+          </select>
+          <select id="npc-disp">${DISPOSITIONS.map(([v, l]) => `<option value="${v}" ${v === "neutral" ? "selected" : ""}>${l}</option>`).join("")}</select>
+          <button class="btn small" data-action="npc-add">+ Add NPC</button>
+        </div>
+        <p class="ref-meta">Pick a monster to use as a template — its stats copy in and stay fully editable — or add a blank Custom NPC.</p>
+      </section>
+      ${sections}`;
+  }
+
+  npcArea.addEventListener("input", (e) => {
+    const path = e.target.dataset?.npath;
+    if (!path) return;
+    setPath(npcDoc, path, coerce(e.target));
+    npcSaveSoon();
+  });
+
+  npcArea.addEventListener("change", (e) => {
+    if (e.target.dataset?.role !== "disp") return;
+    // value already applied by the input handler — move the card now
+    e.target.blur();
+    npcSaveNow();
+    paintNpcs();
+  });
+
+  npcArea.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn) return;
+    const action = btn.dataset.action;
+    if (action === "npc-toggle") {
+      const id = btn.dataset.id;
+      if (npcOpen.has(id)) npcOpen.delete(id); else npcOpen.add(id);
+      paintNpcs(true);
+      return;
+    }
+    if (action === "npc-add") {
+      const tpl = document.getElementById("npc-template").value;
+      const npc = tpl === "" || !monsterTemplates ? blankNpc() : npcFromMonster(monsterTemplates[Number(tpl)]);
+      npc.disposition = document.getElementById("npc-disp").value;
+      if (npc.name) {
+        const names = npcDoc.npcs.map((n) => n.name);
+        const base = npc.name;
+        let k = 2;
+        while (names.includes(npc.name)) npc.name = `${base} ${k++}`;
+      }
+      npcOpen.add(npc.id);
+      npcDoc.npcs.push(npc);
+      npcSaveNow();
+      paintNpcs(true);
+      return;
+    }
+    if (action === "npc-hp") {
+      const n = npcDoc.npcs[Number(btn.dataset.idx)];
+      if (!n) return;
+      n.hp.current = (Number(n.hp.current) || 0) + Number(btn.dataset.d);
+      npcSaveNow();
+      paintNpcs(true);
+      return;
+    }
+    if (action === "npc-add-action") {
+      const n = npcDoc.npcs[Number(btn.dataset.idx)];
+      if (!n) return;
+      n.actions.push({ name: "", description: "" });
+      npcOpen.add(btn.dataset.id);
+      npcSaveNow();
+      paintNpcs(true);
+      return;
+    }
+    if (action === "npc-del-action") {
+      const n = npcDoc.npcs[Number(btn.dataset.idx)];
+      if (!n) return;
+      n.actions.splice(Number(btn.dataset.j), 1);
+      npcSaveNow();
+      paintNpcs(true);
+      return;
+    }
+    if (action === "npc-del") {
+      const i = Number(btn.dataset.idx);
+      const name = (npcDoc.npcs[i]?.name || "").trim();
+      if (name && !confirm(`Remove ${name}?`)) return;
+      npcDoc.npcs.splice(i, 1);
+      npcSaveNow();
+      paintNpcs(true);
+      return;
+    }
+    if (action === "npc-clear") {
+      const disp = btn.dataset.disp;
+      if (!confirm(`Clear ALL ${disp} NPCs?`)) return;
+      npcDoc.npcs = npcDoc.npcs.filter((n) => (n.disposition || "neutral") !== disp);
+      npcSaveNow();
+      paintNpcs(true);
+    }
+  });
+
+  paintNpcs(true);
 
   toolsEl.addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-action]");

@@ -159,7 +159,7 @@ code {
 .btn.danger { background: var(--red); border-color: var(--red-deep); }
 .btn.danger:hover { background: var(--red-deep); }
 
-input, select {
+input, select, textarea {
   font-family: var(--font-ui);
   font-size: 16px; /* prevents iOS zoom-on-focus */
   background: var(--paper-2);
@@ -171,7 +171,7 @@ input, select {
   width: 100%;
   min-width: 0;
 }
-input:focus, select:focus { outline: none; border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
 input[type="number"] { appearance: textfield; }
 input::placeholder { color: #8d8266; }
 
@@ -416,6 +416,71 @@ input::placeholder { color: #8d8266; }
 .battle-add { margin-top: 10px; }
 .battle-add .btn { height: 38px; padding: 0 14px; }
 #battle-editor > .btn.danger { margin-top: 10px; }
+
+/* ---- NPC manager (DM view) ---- */
+
+#npc-area { margin-top: 20px; }
+@media (min-width: 1100px) {
+  #app:has(.dm-grid) #npc-area { max-width: 780px; margin-left: auto; margin-right: auto; }
+}
+
+.npc-add-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.npc-add-bar select { flex: 2 1 200px; width: auto; font-size: 0.85rem; }
+.npc-add-bar #npc-disp { flex: 1 1 100px; }
+.npc-add-bar .btn { height: 38px; }
+
+.npc-section h2 .npc-count {
+  float: right; font-family: var(--font-ui); font-size: 0.8rem; color: var(--bone);
+  background: rgba(255,255,255,0.12); border-radius: 999px; padding: 1px 10px;
+}
+.npc-section.npc-friendly h2 { border-bottom-color: var(--green-dim); }
+.npc-section.npc-neutral h2 { border-bottom-color: #857852; }
+.npc-section.npc-hostile h2 { border-bottom-color: var(--red); }
+
+.npc-card {
+  background: var(--paper-2);
+  border: 1px solid #6d6249;
+  padding: 8px 10px 10px;
+  margin-bottom: 10px;
+}
+.npc-card.friendly { border-left: 5px solid var(--green-dim); }
+.npc-card.neutral { border-left: 5px solid #857852; }
+.npc-card.hostile { border-left: 5px solid var(--red); }
+
+.npc-head { display: grid; grid-template-columns: 34px minmax(0,1fr) 34px; gap: 6px; align-items: center; }
+.npc-toggle {
+  background: transparent; color: var(--ink); border: 1px solid #7a6f56;
+  width: 34px; height: 36px; font-size: 1rem; cursor: pointer; padding: 0;
+}
+.npc-toggle:hover { border-color: var(--red); color: var(--red-deep); }
+.npc-name { font-family: var(--font-display); font-size: 1.05rem; }
+
+.npc-quick {
+  display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap;
+  margin-top: 8px; font-family: var(--font-ui); font-size: 0.85rem;
+}
+.npc-quick .pill { flex: none; }
+.npc-mini { display: flex; align-items: center; gap: 5px; font-weight: 700; }
+.npc-mini input { width: 54px; text-align: center; padding: 6px 4px; }
+.npc-quick .dm-hp .bump { width: 30px; height: 30px; font-size: 1rem; }
+.npc-hp-in { width: 54px; text-align: center; padding: 6px 4px; font-weight: 700; }
+.npc-quick select { width: auto; flex: none; font-size: 0.8rem; padding: 7px 8px; }
+.npc-quick .dm-hp.low .npc-hp-in:first-of-type { color: var(--red); }
+
+.npc-body { margin-top: 10px; border-top: 1px dotted #7a6f56; padding-top: 10px; }
+.npc-body > .notes { margin-bottom: 10px; font-style: italic; }
+.npc-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 10px; }
+@media (min-width: 560px) { .npc-grid { grid-template-columns: repeat(4, 1fr); } }
+.npc-attack { margin-bottom: 10px; }
+.npc-stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; margin-bottom: 4px; }
+.npc-stat { display: flex; flex-direction: column; gap: 2px; align-items: center; font-family: var(--font-ui); }
+.npc-stat span { font-size: 0.6rem; letter-spacing: 0.1em; color: var(--red-deep); }
+.npc-stat input { text-align: center; padding: 6px 2px; font-size: 0.85rem; }
+
+.npc-action-row { grid-template-columns: minmax(0,1fr) 34px; }
+.npc-action-row .notes { grid-column: 1 / -1; font-family: var(--font-ui); font-size: 0.85rem; resize: vertical; }
+
+.npc-clear { margin-top: 6px; }
 
 /* ---- DM view ---- */
 

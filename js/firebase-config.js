@@ -23,3 +23,7 @@ export const firebaseConfig = {
 // link. This only deters casual visitors who stumble on the URL —
 // real access control lives in the Firestore rules (see README).
 export const APP_PASSCODE = "dorvus";
+
+// Optional extra passcode for the DM View (NPC manager etc.).
+// Leave "" to keep the DM View open to the whole party.
+export const DM_PASSCODE = "";
