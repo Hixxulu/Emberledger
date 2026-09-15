@@ -7,4 +7,5 @@ Vermis/
 .claude/settings.local.json
 
 # Party data snapshots — private, restore from these locally
-backups/
+# (the .ps1 helper scripts in backups/ ARE tracked; only data stays out)
+backups/*.json
