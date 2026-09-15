@@ -246,7 +246,7 @@ async function initStore() {
       const qy = fs.query(fs.collection(db, "backups"), fs.where(fs.documentId(), ">=", "snap_" + since));
       const out = [];
       (await fs.getDocs(qy)).forEach((d) => out.push({ id: d.id, ...d.data() }));
-      return out.sort((a, b) => b.id.localeCompare(a.id)).slice(0, n);
+      return out.sort((a, b) => (b.takenAt || 0) - (a.takenAt || 0) || b.id.localeCompare(a.id)).slice(0, n);
     };
     // One-shot daily backup: wait for the first snapshot CONFIRMED BY THE
     // SERVER (never cache — cache can lie when the connection is flaky),
