@@ -238,10 +238,15 @@ async function initStore() {
       return snap.exists() ? snap.data() : null;
     };
     store.listBackups = async (n = 10) => {
-      const qy = fs.query(fs.collection(db, "backups"), fs.orderBy(fs.documentId(), "desc"), fs.limit(n));
+      // Range on document id (date-prefixed), newest first client-side.
+      // A desc orderBy on __name__ would need a manual composite index;
+      // this shape works out of the box and stays bounded (45-day window —
+      // older snapshots still exist, they just age out of this list).
+      const since = new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10);
+      const qy = fs.query(fs.collection(db, "backups"), fs.where(fs.documentId(), ">=", "snap_" + since));
       const out = [];
       (await fs.getDocs(qy)).forEach((d) => out.push({ id: d.id, ...d.data() }));
-      return out;
+      return out.sort((a, b) => b.id.localeCompare(a.id)).slice(0, n);
     };
     // One-shot daily backup: wait for the first snapshot CONFIRMED BY THE
     // SERVER (never cache — cache can lie when the connection is flaky),
@@ -1344,6 +1349,11 @@ function renderDM() {
         rules from the README (they add a write-once <code>backups</code> collection), then reload.</div>
       </section>`;
     }
+    if (bkList === "error") {
+      return `<section class="card"><h2>Backups</h2>
+        <div class="banner red">Could not read the backup list — check the connection and reload. Details in the browser console.</div>
+      </section>`;
+    }
     const newest = bkList[0];
     const ageH = newest ? (Date.now() - (newest.takenAt || 0)) / 3600000 : Infinity;
     const health = !newest
@@ -1386,7 +1396,7 @@ function renderDM() {
       bkList = await store.listBackups(10);
     } catch (err) {
       console.warn("listBackups failed:", err);
-      bkList = "denied";
+      bkList = err?.code === "permission-denied" ? "denied" : "error";
     }
     backupArea.innerHTML = backupCardHtml();
   }
