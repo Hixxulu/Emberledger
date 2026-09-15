@@ -112,6 +112,29 @@ function npcsOf(chars) {
   return deepMerge(defaultNpcs(), chars[NPCS_SLUG] || {});
 }
 
+/* ---------------- backups ---------------- */
+
+// Snapshots of the whole characters collection live in a separate `backups`
+// collection whose rules allow create but never update or delete, so no app
+// bug (or anyone with the link) can damage history. One automatic snapshot
+// per day, written by whichever device opens the app first; manual snapshots
+// any time from the DM view.
+
+const todayBackupId = () => "snap_" + new Date().toISOString().slice(0, 10);
+
+async function runDailyBackup(chars) {
+  try {
+    // never snapshot an empty or meta-only roster
+    if (!Object.keys(chars).some((s) => !isMetaSlug(s))) return;
+    const id = todayBackupId();
+    if (await store.getBackup(id)) return;
+    await store.createBackup(id, { takenAt: Date.now(), kind: "auto", chars });
+    console.info("Daily backup written:", id);
+  } catch (err) {
+    console.warn("Auto-backup failed (have the backup rules been published?):", err);
+  }
+}
+
 /* ---------------- storage (Firestore or device-only fallback) ---------------- */
 
 const store = { mode: "local", subscribe: null, subscribeAll: null, save: null, delete: null };
@@ -162,6 +185,16 @@ function initLocalStore() {
     localStorage.removeItem(key(slug));
     notify(slug, null, false);
   };
+  const BK = "sd_bk_";
+  store.createBackup = async (id, data) => localStorage.setItem(BK + id, JSON.stringify(data));
+  store.getBackup = async (id) => {
+    try { return JSON.parse(localStorage.getItem(BK + id)); } catch { return null; }
+  };
+  store.listBackups = async (n = 10) =>
+    Object.keys(localStorage).filter((k) => k.startsWith(BK)).sort().reverse().slice(0, n)
+      .map((k) => { try { return { id: k.slice(BK.length), ...JSON.parse(localStorage.getItem(k)) }; } catch { return null; } })
+      .filter(Boolean);
+  setTimeout(() => runDailyBackup(readAll()), 500);
   // sync between tabs on the same device
   window.addEventListener("storage", (e) => {
     if (!e.key || !e.key.startsWith(PREFIX)) return;
@@ -199,15 +232,40 @@ async function initStore() {
       );
     store.save = (slug, data) => fs.setDoc(fs.doc(db, "characters", slug), data);
     store.delete = (slug) => fs.deleteDoc(fs.doc(db, "characters", slug));
+    store.createBackup = (id, data) => fs.setDoc(fs.doc(db, "backups", id), data);
+    store.getBackup = async (id) => {
+      const snap = await fs.getDoc(fs.doc(db, "backups", id));
+      return snap.exists() ? snap.data() : null;
+    };
+    store.listBackups = async (n = 10) => {
+      const qy = fs.query(fs.collection(db, "backups"), fs.orderBy(fs.documentId(), "desc"), fs.limit(n));
+      const out = [];
+      (await fs.getDocs(qy)).forEach((d) => out.push({ id: d.id, ...d.data() }));
+      return out;
+    };
+    // One-shot daily backup: wait for the first snapshot CONFIRMED BY THE
+    // SERVER (never cache — cache can lie when the connection is flaky),
+    // then write today's snapshot if it doesn't already exist.
+    const stopBk = fs.onSnapshot(fs.collection(db, "characters"), (snap) => {
+      if (snap.metadata.fromCache) return;
+      stopBk();
+      const chars = {};
+      snap.forEach((d) => { chars[d.id] = d.data(); });
+      runDailyBackup(chars);
+    });
   } catch (err) {
     console.error("Firebase init failed, falling back to device-only mode:", err);
     initLocalStore();
   }
 }
 
-// Seed the five starting PCs once, on an empty roster.
+// Seed the five starting PCs once, on an empty roster — DEVICE-ONLY MODE ONLY.
+// Never in cloud mode: a flaky connection can make Firestore report an empty
+// roster from cache, and seeding on that once overwrote the whole party with
+// blank characters mid-session. The cloud roster is never auto-written.
 let seedChecked = false;
 function maybeSeed(chars) {
+  if (store.mode !== "local") return;
   if (seedChecked) return;
   seedChecked = true;
   if (Object.keys(chars).filter((s) => !isMetaSlug(s)).length > 0) return;
@@ -923,7 +981,8 @@ function renderDM() {
     </header>
     <div id="party-tools"></div>
     <div class="dm-grid" id="dm-grid"><p class="empty">Consulting the ledger&hellip;</p></div>
-    <div id="npc-area"></div>`;
+    <div id="npc-area"></div>
+    <div id="backup-area"></div>`;
 
   const grid = document.getElementById("dm-grid");
   const toolsEl = document.getElementById("party-tools");
@@ -1000,7 +1059,10 @@ function renderDM() {
       <p class="dm-foot dim">Gear ${total}/${cap} slots · ${esc(c.coins.gp)} gp ${esc(c.coins.sp)} sp ${esc(c.coins.cp)} cp</p>`;
   }
 
+  let latestChars = {};
+
   function paint(chars) {
+    latestChars = chars;
     party = partyOf(chars);
     paintTools();
     applyNpcRemote(chars);
@@ -1258,6 +1320,120 @@ function renderDM() {
   });
 
   paintNpcs(true);
+
+  /* ----- backups card ----- */
+
+  const backupArea = document.getElementById("backup-area");
+  const bkOpen = new Set();
+  let bkList = null; // null = loading, "denied" = rules missing, else array
+
+  function fmtBkDate(b) {
+    if (!b.takenAt) return b.id;
+    return new Date(b.takenAt).toLocaleString(undefined, {
+      day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+    });
+  }
+
+  function backupCardHtml() {
+    if (bkList === null) {
+      return `<section class="card"><h2>Backups</h2><p class="empty">Checking the vault&hellip;</p></section>`;
+    }
+    if (bkList === "denied") {
+      return `<section class="card"><h2>Backups</h2>
+        <div class="banner red">Cloud backups are blocked by the Firestore rules. Publish the updated
+        rules from the README (they add a write-once <code>backups</code> collection), then reload.</div>
+      </section>`;
+    }
+    const newest = bkList[0];
+    const ageH = newest ? (Date.now() - (newest.takenAt || 0)) / 3600000 : Infinity;
+    const health = !newest
+      ? `<p class="empty">No backups yet. One is taken automatically each day; you can also take one now.</p>`
+      : `<p class="bk-health ${ageH > 48 ? "warn" : ""}">Last backup: <b>${esc(fmtBkDate(newest))}</b>${ageH > 48 ? " &mdash; over two days old!" : ""}</p>`;
+    const rows = bkList.map((b) => {
+      const names = Object.entries(b.chars || {}).filter(([s]) => !isMetaSlug(s));
+      const open = bkOpen.has(b.id);
+      return `
+        <div class="bk-row">
+          <div class="bk-head">
+            <button class="npc-toggle" data-action="bk-toggle" data-id="${esc(b.id)}" title="Contents">${open ? "&#9662;" : "&#9656;"}</button>
+            <span class="bk-label">${esc(fmtBkDate(b))} <span class="dim">&middot; ${b.kind === "manual" ? "manual" : "daily"} &middot; ${names.length} character${names.length === 1 ? "" : "s"}</span></span>
+          </div>
+          ${open ? `
+            <div class="bk-body">
+              ${names.map(([slug, c]) => `
+                <div class="bk-char">
+                  <span>${esc(c.name || slug)} <span class="dim">Lvl ${esc(c.level ?? "?")} &middot; ${(c.gear || []).length} gear &middot; ${(c.talentsAndSpells || []).length} talents/spells</span></span>
+                  <button class="btn small" data-action="bk-restore-one" data-id="${esc(b.id)}" data-slug="${esc(slug)}">Restore</button>
+                </div>`).join("")}
+              <button class="btn small danger" data-action="bk-restore-all" data-id="${esc(b.id)}">Restore ALL characters from this backup</button>
+            </div>` : ""}
+        </div>`;
+    }).join("");
+    return `
+      <section class="card bk-card">
+        <h2>Backups</h2>
+        ${health}
+        ${rows}
+        <button class="btn small" data-action="bk-now">Back up now</button>
+        <p class="ref-meta">A snapshot is written automatically once a day by whoever opens the app first.
+        Snapshots can never be altered or deleted. Restoring overwrites the live sheet(s) with the snapshot
+        &mdash; take a fresh manual backup first if in doubt.</p>
+      </section>`;
+  }
+
+  async function refreshBackups() {
+    try {
+      bkList = await store.listBackups(10);
+    } catch (err) {
+      console.warn("listBackups failed:", err);
+      bkList = "denied";
+    }
+    backupArea.innerHTML = backupCardHtml();
+  }
+
+  backupArea.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn) return;
+    const action = btn.dataset.action;
+    if (action === "bk-toggle") {
+      const id = btn.dataset.id;
+      if (bkOpen.has(id)) bkOpen.delete(id); else bkOpen.add(id);
+      backupArea.innerHTML = backupCardHtml();
+      return;
+    }
+    if (action === "bk-now") {
+      btn.disabled = true;
+      try {
+        const t = new Date();
+        const id = todayBackupId() + "_" + t.toTimeString().slice(0, 8).replace(/:/g, "");
+        await store.createBackup(id, { takenAt: Date.now(), kind: "manual", chars: latestChars });
+      } catch (err) {
+        console.error("Manual backup failed:", err);
+        alert("Backup failed — have the backup rules been published? See the README.");
+      }
+      refreshBackups();
+      return;
+    }
+    if (action === "bk-restore-one" || action === "bk-restore-all") {
+      const b = Array.isArray(bkList) ? bkList.find((x) => x.id === btn.dataset.id) : null;
+      if (!b) return;
+      const when = fmtBkDate(b);
+      if (action === "bk-restore-one") {
+        const slug = btn.dataset.slug;
+        const c = b.chars[slug];
+        if (!c) return;
+        if (!confirm(`Restore ${c.name || slug} from the ${when} backup? Their current sheet will be overwritten.`)) return;
+        await store.save(slug, c);
+      } else {
+        const names = Object.entries(b.chars || {}).filter(([s]) => !isMetaSlug(s));
+        if (!confirm(`Restore ALL ${names.length} characters from the ${when} backup? Every current sheet will be overwritten.`)) return;
+        for (const [slug, c] of names) await store.save(slug, c);
+      }
+      refreshBackups();
+    }
+  });
+
+  refreshBackups();
 
   toolsEl.addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-action]");

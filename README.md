@@ -63,9 +63,16 @@ sync between devices. A banner says so.
        match /characters/{slug} {
          allow read, write: if true;
        }
+       match /backups/{id} {
+         allow read, create: if true;
+         allow update, delete: if false;
+       }
      }
    }
    ```
+
+   The `backups` collection is write-once by design: snapshots can be created
+   and read, but never modified or deleted — not even by a buggy client.
 
    Anyone with the URL can edit the party. That is the intended model for a
    private group link; for a light deterrent set `APP_PASSCODE` in
@@ -90,6 +97,26 @@ sync between devices. A banner says so.
 - `#/ref` — spells / monsters / magic items / rules quick reference, with
   search plus class, tier, level, type, and source filters (works offline
   once loaded)
+
+## Backups & recovery
+
+Three independent layers protect character data:
+
+1. **Automatic daily cloud snapshots.** Whichever device opens the app first
+   each day writes a full snapshot of every character into the write-once
+   `backups` collection (only after the roster is confirmed by the server,
+   never from cache). The DM View's **Backups** card lists recent snapshots
+   and can restore a single character or the whole party in two taps.
+2. **Manual snapshots.** "Back up now" in the same card — take one before
+   every session, or before anything risky.
+3. **Local pulls.** `backups/pull-backup.ps1` downloads a dated JSON copy of
+   the collection to this folder (keeps the newest 60). Run it by hand or via
+   Windows Task Scheduler for an off-cloud copy. `convert-backup.ps1` turns a
+   pull into the app's plain JSON shape for hand inspection or restores.
+
+The roster is never auto-written in cloud mode. (The original first-run
+seeding could overwrite the party with blanks if a flaky connection made the
+roster look empty — that bug caused a full party wipe once and is removed.)
 
 ## Reference data & license
 

@@ -482,6 +482,28 @@ input::placeholder { color: #8d8266; }
 
 .npc-clear { margin-top: 6px; }
 
+/* ---- backups card (DM view) ---- */
+
+#backup-area { margin-top: 20px; }
+@media (min-width: 1100px) {
+  #app:has(.dm-grid) #backup-area { max-width: 780px; margin-left: auto; margin-right: auto; }
+}
+
+.bk-health { font-family: var(--font-ui); font-size: 0.9rem; margin: 2px 0 10px; }
+.bk-health.warn { color: var(--red); font-weight: 700; }
+
+.bk-row { border-bottom: 1px dotted #7a6f56; padding: 6px 0; }
+.bk-row:last-of-type { border-bottom: none; margin-bottom: 8px; }
+.bk-head { display: flex; align-items: center; gap: 8px; }
+.bk-label { font-family: var(--font-ui); font-size: 0.9rem; }
+
+.bk-body { margin: 8px 0 4px 42px; }
+.bk-char {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 5px 0; font-family: var(--font-ui); font-size: 0.85rem; flex-wrap: wrap;
+}
+.bk-body > .btn.danger { margin-top: 8px; }
+
 /* ---- DM view ---- */
 
 .dm-grid { display: grid; gap: 14px; grid-template-columns: 1fr; }
